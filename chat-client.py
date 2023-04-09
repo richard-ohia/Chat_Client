@@ -1,3 +1,16 @@
+"""
+The application must:
+
+Implement the chat protocol described in Appendix A of the Lab Guide.
+Connect to the chat server and let the user log in using a unique name. ~ Ask for another name if the chosen name is already taken.
+Let the user shutdown the client by typing !quit.
+Let the user list all currently logged-in users by typing !who.
+Let the user send messages to other users by typing @username message.
+Receive messages from other users and display them to the user.
+
+@authors Richard Ohia and Yonas Gebregziabher 
+"""
+
 import socket
 import select
 import sys
