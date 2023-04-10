@@ -31,7 +31,7 @@ def handshake(socket_instance):
     user_name = f"HELLO-FROM {user_name}\n"
     socket_instance.send(user_name.encode())
     buffer = socket_instance.recv(BUFFER_SIZE)
-    print(server_output_to_msg(buffer))
+    return buffer
 
 
 def handle_socket(socket_instance, stop_thread):
@@ -114,6 +114,7 @@ def main():
         socket_instance = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         # if username is taken, user tries again
         user = handshake(socket_instance)
+    print(server_output_to_msg(user))
 
     print("Please always enter your command in the empty new line: ")
 
