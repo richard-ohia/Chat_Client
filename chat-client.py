@@ -1,13 +1,11 @@
 """
 The application must:
-
 Implement the chat protocol described in Appendix A of the Lab Guide.
 Connect to the chat server and let the user log in using a unique name. ~ Ask for another name if the chosen name is already taken.
 Let the user shutdown the client by typing !quit.
 Let the user list all currently logged-in users by typing !who.
 Let the user send messages to other users by typing @username message.
 Receive messages from other users and display them to the user.
-
 @authors Richard Ohia and Yonas Gebregziabher 
 """
 
@@ -42,6 +40,7 @@ def handle_socket(socket_instance, stop_thread):
     socket_instance.settimeout(1.0)  # set the timeout to 1 second
     while not stop_thread.is_set():
         final_msg = ""
+        msg = None
         try:
             msg = socket_instance.recv(BUFFER_SIZE)
             decoded = msg.decode("ascii")
@@ -59,7 +58,7 @@ def handle_socket(socket_instance, stop_thread):
             messages = final_msg.split(" ")
             print("\n" + messages[1] + " --> " + ' '.join(messages[2:]))
         else:
-            print(server_output_to_msg(msg))
+            print(server_output_to_msg(final_msg))
     return
 
 
@@ -98,7 +97,8 @@ def server_output_to_msg(server_output):
     """
     if server_output is None:
         return "Error with given command or server response."
-    server_output = server_output.decode('ascii')
+    if (type(server_output) != str):
+        server_output = server_output.decode('ascii')
     if server_output == "SEND-OK\n":
         return "Message sent successfully!"
     elif server_output == "BAD-DEST-USER\n":
