@@ -17,7 +17,7 @@ import sys
 
 HOST_NAME = "143.47.184.219"
 PORT_NUMBER = 5378
-BUFFER_SIZE = 2048
+BUFFER_SIZE = 64
 
 
 def handshake(socket_instance):
@@ -41,13 +41,22 @@ def handle_socket(socket_instance, stop_thread):
     """
     socket_instance.settimeout(1.0)  # set the timeout to 1 second
     while not stop_thread.is_set():
+        final_msg = ""
         try:
             msg = socket_instance.recv(BUFFER_SIZE)
+            decoded = msg.decode("ascii")
+            while (len(decoded) >= 1):
+                if (decoded[-1] == "\n"):
+                    final_msg += decoded
+                    break
+                final_msg += decoded
+                msg = socket_instance.recv(BUFFER_SIZE)
+                decoded = msg.decode("ascii")
+
         except socket.timeout:
             continue  # timeout occurred, go back to the beginning of the loop
-        msg_in_string = msg.decode('ascii')
-        if msg_in_string.startswith("DELIVERY"):
-            messages = msg_in_string.split(" ")
+        if final_msg.startswith("DELIVERY"):
+            messages = final_msg.split(" ")
             print("\n" + messages[1] + " --> " + ' '.join(messages[2:]))
         else:
             print(server_output_to_msg(msg))
@@ -77,7 +86,8 @@ def handle_user_input(socket_instance, stop_thread):
             send_message = f"SEND {user_name} {message}\n"
             socket_instance.send(send_message.encode())
         else:
-            print(server_output_to_msg(None))  # if command is invalid, it returns none and `server_output_to_msg() prints the error `
+            # if command is invalid, it returns none and `server_output_to_msg() prints the error `
+            print(server_output_to_msg(None))
     return
 
 
@@ -104,35 +114,37 @@ def server_output_to_msg(server_output):
     elif server_output.startswith("HELLO"):
         username = server_output.split(" ")
         return "Welcome online, " + username[1]
+    elif server_output == "IN-USE\n":
+        return "User already exists. Please use a different one!"
 
 
 def main():
     socket_instance = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     user = handshake(socket_instance)
-    while (user == b"IN-USE\n"):
-        print("User name already taken.")
+    server_output = user.decode('ascii')
+    while (not server_output.startswith("HELLO")):
+        print(server_output_to_msg(user))
         socket_instance = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         # if username is taken, user tries again
         user = handshake(socket_instance)
+        server_output = user.decode('ascii')
     print(server_output_to_msg(user))
-
     print("Please always enter your command in the empty new line: ")
 
     stop_thread = threading.Event()
-    
-    input_thread = threading.Thread(target=handle_user_input, args=(socket_instance, stop_thread))
-    socket_thread = threading.Thread(target=handle_socket, args=(socket_instance, stop_thread))
+    input_thread = threading.Thread(
+        target=handle_user_input, args=(socket_instance, stop_thread))
+    socket_thread = threading.Thread(
+        target=handle_socket, args=(socket_instance, stop_thread))
 
     input_thread.start()
     socket_thread.start()
 
-
     input_thread.join()
     socket_thread.join()
 
-
     socket_instance.close()
-    sys.exit() # Exit the program
+    sys.exit()  # Exit the program
 
 
 main()
