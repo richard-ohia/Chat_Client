@@ -13,7 +13,8 @@ import socket
 import threading
 import sys
 
-HOST_NAME = "143.47.184.219"
+HOST_NAME = "0.0.0.0"
+VU_HOST_NAME = "143.47.184.219"
 PORT_NUMBER = 5378
 BUFFER_SIZE = 64
 
