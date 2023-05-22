@@ -10,12 +10,21 @@ Receive messages from other users and display them to the user.
 """
 
 import socket
+import random
 import threading
 import sys
+import time
 
 HOST_NAME = "143.47.184.219"
 PORT_NUMBER = 5382
-BUFFER_SIZE = 64
+BUFFER_SIZE = 1024
+
+SEQUENCE_NUMBER = random.randint(16, 2**32)
+ACKNOWLEDGEMENT_NUMBER = 0
+
+MESSAGE = ""
+
+MESSAGE_QUEUE = []
 
 DROP = 0
 FLIP = 0
@@ -101,32 +110,131 @@ def configure_server(socket_instance, set_drop=DROP, set_flip=FLIP, set_burst=BU
             print("Failed to configure DELAY-LEN in the server.")
 
 
+def extract_sequence_number(message):
+    sequence = message.split("**90")[0]
+    return sequence
+
+def extract_acknowledgment_number(message):
+    acknowledgment = message.split("**90")[1]
+    return acknowledgment
+
+
+def construct_message(sequence_number, acknowledgment, data):
+    delimiter = "**90"
+    return str(sequence_number) + delimiter + str(acknowledgment) + delimiter + data
+
+def acknowledgement_check(msg):
+    correct_ack = False
+    global SEQUENCE_NUMBER
+    start_time = time.time()
+    received_ack_number = extract_acknowledgment_number(msg)
+    while not correct_ack:
+        if int(SEQUENCE_NUMBER) == int(received_ack_number):  # Correct ACK received
+            SEQUENCE_NUMBER += 1
+            correct_ack = True
+            if(len(MESSAGE_QUEUE) != 0):
+                MESSAGE_QUEUE.pop(0)
+            print("Message was acknowledged.")
+            break
+        elif time.time() - start_time > 10:  # Timeout limit exceeded
+            print("Timeout limit exceeded, resending message...")
+            break
+    return
+
+
+def calculate_checksum(data):
+    checksum = 0
+    for i in range(0, len(data), 2):
+        if i + 1 < len(data):
+            # Get two bytes from the data
+            word = (data[i] << 8) + data[i + 1]
+            checksum += word
+
+    # Add the carry if it exists
+    if len(data) % 2 != 0:
+        checksum += data[-1]
+
+    # Fold the carry bits
+    while checksum >> 16:
+        checksum = (checksum & 0xFFFF) + (checksum >> 16)
+
+    # Invert the bits to get the checksum
+    checksum = ~checksum & 0xFFFF
+    
+    return data.decode() + "!check" + str(checksum)
+
+def validate_checksum(data):
+    # Extract the received checksum from the packet
+    received_checksum = data.split("!check")[1]
+
+    # Calculate the checksum of the data
+    calculated_checksum = calculate_checksum((data.split("!check")[0]).encode())
+    calculated_checksum = calculated_checksum.split("!check")[1]
+
+    # Compare the received and calculated checksums
+    if received_checksum == calculated_checksum:
+        return True
+    else:
+        return False
+
+
+
 def handle_socket(socket_instance, stop_thread):
     """
     This function takes a socket object socket_instance as an argument and listens for any message from the server. 
     We use a timer to restart the loop to check our stop_thread flag 
     """
+    global SEQUENCE_NUMBER
+    global ACKNOWLEDGEMENT_NUMBER
     socket_instance.settimeout(1.0)  # set the timeout to 1 second
     while not stop_thread.is_set():
         final_msg = ""
         msg = None
+        isEnd = False
         try:
-            msg = socket_instance.recvfrom(BUFFER_SIZE)
-            decoded = msg[0].decode("ascii")
-            while (len(decoded) >= 1):
-                if (decoded[-1] == "\n"):
-                    final_msg += decoded
-                    break
-                final_msg += decoded
-                msg = socket_instance.recvfrom(
-                    BUFFER_SIZE)
-                decoded = msg.decode("ascii")
-
+            while not isEnd:
+                msg, addr= socket_instance.recvfrom(BUFFER_SIZE)
+                final_msg += msg.decode('utf-8')
+                if(final_msg[-1] == "\n"):
+                    isEnd = True
         except socket.timeout:
+            if(len(MESSAGE_QUEUE) > 0):
+                message = MESSAGE_QUEUE[0]
+                socket_instance.sendto(message.encode(),
+                (HOST_NAME, PORT_NUMBER))
             continue  # timeout occurred, go back to the beginning of the loop
+        except:
+            print("Error in message detected!")
+            continue
         if final_msg.startswith("DELIVERY"):
-            messages = final_msg.split(" ")
-            print("\n" + messages[1] + " --> " + ' '.join(messages[2:]))
+            msg_list = final_msg.split()
+
+            sender = msg_list[1]
+            decoded = ' '.join(msg_list[2:])
+            # Extract sequence number from the received message
+            received_sequence_number = extract_sequence_number(decoded)
+            if(decoded.split("**90")[2] == ""):
+                acknowledgement_check(decoded)
+            else:
+                if(not validate_checksum(decoded)):
+                    print("Error in message detected!")
+                    exit()
+                if ACKNOWLEDGEMENT_NUMBER == 0 or int(received_sequence_number) == int(ACKNOWLEDGEMENT_NUMBER) or int(received_sequence_number) == int(ACKNOWLEDGEMENT_NUMBER) - 1:
+                    ACKNOWLEDGEMENT_NUMBER = int(received_sequence_number)
+    
+                    # Construct the acknowledgment message
+                    acknowledgment_message = construct_message(SEQUENCE_NUMBER, ACKNOWLEDGEMENT_NUMBER, "")
+
+                    send_message = f"SEND {sender} {acknowledgment_message}\n"
+                    # Send the acknowledgment message
+                    socket_instance.sendto(send_message.encode(), (HOST_NAME, PORT_NUMBER))
+
+                    # Increment the expected sequence number
+                    ACKNOWLEDGEMENT_NUMBER += 1
+
+                sent_message = decoded.split("**90")[2]
+                sent_message =sent_message.split("!check")[0]
+                print("\n" + msg_list[1] + " --> " + sent_message)
         else:
             print(server_output_to_msg(final_msg))
     return
@@ -158,8 +266,15 @@ def handle_user_input(socket_instance, stop_thread):
             message_list = command.split()
             user_name = message_list[0][1:]
             message = ' '.join(message_list[1:])
-            send_message = f"SEND {user_name} {message}\n"
-            socket_instance.sendto(send_message.encode(),
+            # Construct the message with sequence number and acknowledgment
+            constructed_message = construct_message(SEQUENCE_NUMBER, ACKNOWLEDGEMENT_NUMBER, message)
+            constructed_message = calculate_checksum(constructed_message.encode())
+            send_message = f"SEND {user_name} {constructed_message}\n"
+
+            MESSAGE_QUEUE.append((send_message))
+
+            if(len(MESSAGE_QUEUE) == 1):
+                socket_instance.sendto(send_message.encode(),
                                    (HOST_NAME, PORT_NUMBER))
         else:
             # if command is invalid, it returns none and `server_output_to_msg() prints the error `
@@ -177,7 +292,7 @@ def server_output_to_msg(server_output):
     if (type(server_output) != str):
         server_output = server_output.decode('ascii')
     if server_output == "SEND-OK\n":
-        return "Message sent successfully!"
+        return "Server has sent your message or acknowledgment!\n"
     elif server_output == "BAD-DEST-USER\n":
         return "User is currently not online or doesn't exist."
     elif server_output == "BUSY\n":
@@ -208,7 +323,7 @@ def main():
         user = user[0]
         server_output = user.decode('ascii')
 
-    configure_server(socket_instance, set_drop=0.5)
+    configure_server(socket_instance, set_flip=0)
 
     print(server_output_to_msg(user))
     print("Please always enter your command in the empty new line: ")
